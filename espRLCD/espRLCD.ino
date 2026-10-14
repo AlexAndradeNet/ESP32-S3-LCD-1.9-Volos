@@ -7,6 +7,15 @@
 #include "orbfont.h"
 #include "secfont.h"
 #include "PCF85063A-SOLDERED.h"
+#include <WiFi.h>
+#include "time.h"
+
+const char* ssid       = "your_ssid"; // Wifi 4
+const char* password   = "your_password";
+
+const char* ntpServer  = "pool.ntp.org";
+const long  gmtOffset_sec = -18000; // Offset in seconds (e.g., -5 hrs for EST = -5 * 3600)
+const int   daylightOffset_sec = 0; // 3600 if Daylight Saving Time is active, else 0
 
 const int BAT_ADC_PIN = 4; // GPIO4
 
@@ -131,7 +140,41 @@ void setup() {
     // rtc.setTime(18, 35, 00); // 24-hour mode, e.g., 11:53:00
     // setDate(weekday, day, month, yr);
    // rtc.setDate(1, 31, 3, 2025); // 0 for Sunday, e.g., Monday, 31.3.2025.
+   setupTime();
     
+}
+
+void setupTime() {
+  Serial.print("Connecting to WiFi");
+  WiFi.begin(ssid, password);
+  
+  int timeout = 0;
+  while (WiFi.status() != WL_CONNECTED && timeout < 20) {
+    delay(500);
+    Serial.print(".");
+    timeout++;
+  }
+
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("\nWiFi Connected! Syncing NTP time...");
+    configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+
+    struct tm timeinfo;
+    if (getLocalTime(&timeinfo)) {
+      // Sync internal system time to hardware PCF85063 RTC
+      rtc.setTime(timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
+      rtc.setDate(timeinfo.tm_wday, timeinfo.tm_mday, timeinfo.tm_mon + 1, timeinfo.tm_year + 1900);
+      Serial.println("RTC updated from NTP successfully!");
+    } else {
+      Serial.println("Failed to obtain time from NTP.");
+    }
+
+    // Disconnect WiFi to save power
+    WiFi.disconnect(true);
+    WiFi.mode(WIFI_OFF);
+  } else {
+    Serial.println("\nWiFi connection failed. Using existing RTC time.");
+  }
 }
 
 int batteryToSegments(float vbat) {
@@ -234,34 +277,33 @@ void draw()
 }
 
 void loop() {
-
-  minn=rtc.getMinute();
-  hr=rtc.getHour();
-  sec=rtc.getSecond();
+  // Read time from hardware RTC
+  minn = rtc.getMinute();
+  hr   = rtc.getHour();
+  sec  = rtc.getSecond();
  
-  if(n==0)
-  { 
-       int raw = analogRead(BAT_ADC_PIN);
-       float v_adc = (raw / 4095.0f) * 3.3f;  
-   
-       v_bat = v_adc * 3.0f*1.079; 
+  // Update battery and temperature sensors every 200 cycles (~10 seconds)
+  if (n == 0) {
+    int raw = analogRead(BAT_ADC_PIN);
+    float v_adc = (raw / 4095.0f) * 3.3f;  
+    v_bat = v_adc * 3.0f * 1.079f; 
 
     Serial.printf("raw=%d  Vadc=%.3f V  Vbat=%.3f V\n", raw, v_adc, v_bat);
     
-     if (shtc3_read(t, h)) {
-    Serial.print("T = "); Serial.print(t, 2); Serial.print(" C,  ");
-    Serial.print("RH = "); Serial.print(h, 2); Serial.println(" %");
-  } else {
-    Serial.println("SHTC3 read failed (addr/pins?)");
-  }
+    if (shtc3_read(t, h)) {
+      Serial.print("T = "); Serial.print(t, 2); Serial.print(" C,  ");
+      Serial.print("RH = "); Serial.print(h, 2); Serial.println(" %");
+    } else {
+      Serial.println("SHTC3 read failed");
+    }
   }
 
   n++;
-  if(n==200)
-  n=0;
   if (n >= 200) n = 0;
 
+  // Render to display
   draw();
+
   // Throttle loop speed to ~20 FPS (50ms delay) to prevent CPU starvation
   delay(50); 
 }
