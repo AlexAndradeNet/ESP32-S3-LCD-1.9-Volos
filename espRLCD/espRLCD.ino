@@ -120,6 +120,7 @@ void setup() {
   analogSetPinAttenuation(BAT_ADC_PIN, ADC_11db);
 
   Wire.begin(13, 14);
+  Wire.setTimeOut(50); // Set 50ms timeout so I2C reads never lock up the CPU
   RlcdPort.RLCD_Init();
  
   esp_sleep_enable_timer_wakeup(10ULL * 6000000ULL);
@@ -258,7 +259,9 @@ void loop() {
   n++;
   if(n==200)
   n=0;
+  if (n >= 200) n = 0;
 
   draw();
- // esp_light_sleep_start();
+  // Throttle loop speed to ~20 FPS (50ms delay) to prevent CPU starvation
+  delay(50); 
 }
